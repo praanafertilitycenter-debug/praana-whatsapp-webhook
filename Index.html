@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Praana WhatsApp Console</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f4f5f7; margin: 0; padding: 32px 16px; display: flex; justify-content: center; }
+    .card { background: #fff; padding: 28px; border-radius: 14px; width: 100%; max-width: 560px; box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
+    h2 { margin: 0 0 18px; color: #e86a33; }
+    label { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; color: #333; }
+    input, select { width: 100%; padding: 10px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
+    .row { display: grid; grid-template-columns: 1fr 120px; gap: 10px; }
+    .tabs { display: flex; gap: 8px; margin: 18px 0 14px; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
+    .tab { flex: 1; padding: 10px; border: 1px solid #e5e7eb; background: #f9fafb; border-radius: 8px; cursor: pointer; font-weight: 600; color: #555; }
+    .tab.active { background: #e86a33; color: #fff; border-color: #e86a33; }
+    .btn { width: 100%; margin-top: 16px; padding: 12px; background: #e86a33; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; }
+    .btn:hover { background: #cf5925; }
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+    .btn-secondary { background: #fff; color: #e86a33; border: 1px solid #e86a33; margin-top: 10px; padding: 8px 12px; font-size: 13px; width: auto; }
+    .btn-stop { background: #dc2626; margin-top: 10px; }
+    .hidden { display: none; }
+    .hint { font-size: 12px; color: #6b7280; margin-top: 4px; }
+    .progress-wrap { margin-top: 14px; background: #e5e7eb; border-radius: 999px; height: 10px; overflow: hidden; }
+    .progress-bar { height: 100%; width: 0%; background: #e86a33; transition: width 0.2s; }
+    .log { margin-top: 14px; max-height: 220px; overflow-y: auto; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; line-height: 1.5; }
+    .ok { color: #34d399; }
+    .err { color: #f87171; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Praana WhatsApp Console</h2>
+
+    <!-- Shared Settings -->
+    <label>Staff Passcode</label>
+    <input type="password" id="password" placeholder="Enter clinic passcode" required />
+
+    <div class="row">
+      <div>
+        <label>Select Template</label>
+        <select id="templateSelect">
+          <option value="praana_appointment_confirmation">Appointment Confirmation (4 vars)</option>
+          <option value="praana_appointment_reminder">Appointment Reminder (3 vars)</option>
+          <option value="praana_report_ready">Lab Report Ready (3 vars)</option>
+          <option value="custom">Custom / Marketing Template</option>
+        </select>
+      </div>
+      <div>
+        <label>Language</label>
+        <input type="text" id="languageCode" value="en" />
+      </div>
+    </div>
+
+    <div id="customTemplateBox" class="hidden">
+      <label>Exact Meta Template Name</label>
+      <input type="text" id="customTemplateName" placeholder="e.g., praana_launch_offer" />
+      <div class="hint">Must match the approved lowercase name in WhatsApp Manager.</div>
+    </div>
+
+    <!-- Mode Tabs -->
+    <div class="tabs">
+      <button type="button" class="tab active" id="tabSingle">Single Message</button>
+      <button type="button" class="tab" id="tabBulk">Bulk CSV Campaign</button>
+    </div>
+
+    <!-- SINGLE MESSAGE PANEL -->
+    <div id="panelSingle">
+      <label>Patient WhatsApp Number</label>
+      <input type="text" id="singlePhone" placeholder="9876543210 or 919876543210" />
+      <div id="singleVarsContainer"></div>
+      <button type="button" class="btn" id="btnSendSingle">Send Message</button>
+      <div id="singleStatus" class="hint" style="margin-top:12px; font-size:14px;"></div>
+    </div>
+
+    <!-- BULK CSV PANEL -->
+    <div id="panelBulk" class="hidden">
+      <label>Upload CSV File</label>
+      <input type="file" id="csvFile" accept=".csv" />
+      <div class="hint" id="csvFormatHint"></div>
+      <button type="button" class="btn btn-secondary" id="btnDownloadSample">Download Sample CSV</button>
+
+      <div id="bulkPreview" class="hint" style="margin-top:12px; font-weight:600; color:#111;"></div>
+      <button type="button" class="btn" id="btnSendBulk" disabled>Start Bulk Campaign</button>
+      <button type="button" class="btn btn-stop hidden" id="btnStopBulk">Stop Campaign</button>
+
+      <div class="progress-wrap hidden" id="progressWrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <div class="log hidden" id="bulkLog"></div>
+    </div>
+  </div>
+
+  <script>
+    const TEMPLATES = {
+      praana_appointment_confirmation: {
+        fields: ['Patient Name', 'Doctor Name', 'Date', 'Time'],
+        defaults: ['', 'Dr. G. Lakshmi', '', ''],
+        sampleRow: ['919876543210', 'Ananya', 'Dr. G. Lakshmi', '25 Nov 2026', '11:00 AM']
+      },
+      praana_appointment_reminder: {
+        fields: ['Patient Name', 'Date', 'Time'],
+        defaults: ['', '', ''],
+        sampleRow: ['919876543210', 'Ananya', '25 Nov 2026', '11:00 AM']
+      },
+      praana_report_ready: {
+        fields: ['Patient Name', 'Reference ID', 'Collection Hours'],
+        defaults: ['', '', '9:00 AM and 6:00 PM'],
+        sampleRow: ['919876543210', 'Ananya', 'PFC-1042', '9:00 AM and 6:00 PM']
+      },
+      custom: {
+        fields: ['Variables (comma-separated, leave blank if none)'],
+        defaults: [''],
+        sampleRow: ['919876543210', 'Ananya']
+      }
+    };
+
+    const templateSelect = document.getElementById('templateSelect');
+    const customBox = document.getElementById('customTemplateBox');
+    const singleVarsContainer = document.getElementById('singleVarsContainer');
+    const csvFormatHint = document.getElementById('csvFormatHint');
+
+    let parsedRows = [];
+    let stopRequested = false;
+
+    function renderFields() {
+      const key = templateSelect.value;
+      const cfg = TEMPLATES[key];
+      customBox.classList.toggle('hidden', key !== 'custom');
+
+      singleVarsContainer.innerHTML = cfg.fields.map((label, i) => `
+        <label>${label}</label>
+        <input type="text" class="var-input" value="${cfg.defaults[i] || ''}" placeholder="${label}" />
+      `).join('');
+
+      if (key === 'custom') {
+        csvFormatHint.textContent = 'CSV columns: phone, var1, var2, ... (just "phone" if no variables).';
+      } else {
+        csvFormatHint.textContent = 'CSV columns: phone, ' + cfg.fields.join(', ');
+      }
+    }
+
+    templateSelect.addEventListener('change', renderFields);
+    renderFields();
+
+    // Tabs
+    const tabSingle = document.getElementById('tabSingle');
+    const tabBulk = document.getElementById('tabBulk');
+    const panelSingle = document.getElementById('panelSingle');
+    const panelBulk = document.getElementById('panelBulk');
+
+    tabSingle.onclick = () => {
+      tabSingle.classList.add('active'); tabBulk.classList.remove('active');
+      panelSingle.classList.remove('hidden'); panelBulk.classList.add('hidden');
+    };
+    tabBulk.onclick = () => {
+      tabBulk.classList.add('active'); tabSingle.classList.remove('active');
+      panelBulk.classList.remove('hidden'); panelSingle.classList.add('hidden');
+    };
+
+    function getTemplateName() {
+      return templateSelect.value === 'custom'
+        ? document.getElementById('customTemplateName').value.trim()
+        : templateSelect.value;
+    }
+
+    // Single Send
+    document.getElementById('btnSendSingle').onclick = async () => {
+      const status = document.getElementById('singleStatus');
+      const key = templateSelect.value;
+      const inputs = [...document.querySelectorAll('.var-input')].map(el => el.value.trim());
+
+      let parameters = inputs;
+      if (key === 'custom') {
+        parameters = inputs[0] ? inputs[0].split(',').map(s => s.trim()).filter(Boolean) : [];
+      }
+
+      status.style.color = '#333';
+      status.textContent = 'Sending...';
+
+      const res = await fetch('/api/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: document.getElementById('password').value,
+          phone: document.getElementById('singlePhone').value.trim(),
+          templateName: getTemplateName(),
+          languageCode: document.getElementById('languageCode').value.trim(),
+          parameters
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        status.style.color = 'green';
+        status.textContent = `Sent to ${data.phone}! ID: ${data.messageId}`;
+      } else {
+        status.style.color = 'red';
+        status.textContent = `Error: ${data.error}`;
+      }
+    };
+
+    // Sample CSV Download
+    document.getElementById('btnDownloadSample').onclick = () => {
+      const key = templateSelect.value;
+      const cfg = TEMPLATES[key];
+      const headers = key === 'custom' ? ['phone', 'var1'] : ['phone', ...cfg.fields];
+      const csv = headers.join(',') + '\n' + cfg.sampleRow.join(',') + '\n';
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${key}_sample.csv`;
+      a.click();
+    };
+
+    // Parse CSV Upload
+    document.getElementById('csvFile').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const lines = ev.target.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const rows = lines.map(line => line.split(',').map(c => c.trim().replace(/^"|"$/g, '')));
+        // Auto-skip header row if first column isn't mostly digits
+        if (rows.length && !/^\+?\d{10,}$/.test(rows[0][0].replace(/[\s-]/g, ''))) {
+          rows.shift();
+        }
+        parsedRows = rows;
+        document.getElementById('bulkPreview').textContent = `Loaded ${parsedRows.length} recipients from ${file.name}.`;
+        document.getElementById('btnSendBulk').disabled = parsedRows.length === 0;
+      };
+      reader.readAsText(file);
+    });
+
+    // Bulk Campaign Execution
+    document.getElementById('btnStopBulk').onclick = () => { stopRequested = true; };
+
+    document.getElementById('btnSendBulk').onclick = async () => {
+      const password = document.getElementById('password').value;
+      const templateName = getTemplateName();
+      const languageCode = document.getElementById('languageCode').value.trim();
+
+      if (!password || !templateName) {
+        alert('Enter your staff passcode and template name first.');
+        return;
+      }
+
+      stopRequested = false;
+      const btnSend = document.getElementById('btnSendBulk');
+      const btnStop = document.getElementById('btnStopBulk');
+      const progressWrap = document.getElementById('progressWrap');
+      const progressBar = document.getElementById('progressBar');
+      const log = document.getElementById('bulkLog');
+
+      btnSend.disabled = true;
+      btnStop.classList.remove('hidden');
+      progressWrap.classList.remove('hidden');
+      log.classList.remove('hidden');
+      log.innerHTML = '';
+
+      let sent = 0, failed = 0;
+
+      for (let i = 0; i < parsedRows.length; i++) {
+        if (stopRequested) {
+          log.innerHTML += `<div>--- Stopped by user at ${i}/${parsedRows.length} ---</div>`;
+          break;
+        }
+
+        const [phone, ...params] = parsedRows[i];
+        const cleanParams = params.filter(p => p !== '');
+
+        try {
+          const res = await fetch('/api/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password, phone, templateName, languageCode, parameters: cleanParams })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            sent++;
+            log.innerHTML += `<div class="ok">[${i + 1}/${parsedRows.length}] Sent → ${data.phone}</div>`;
+          } else {
+            failed++;
+            log.innerHTML += `<div class="err">[${i + 1}/${parsedRows.length}] Failed (${phone}): ${data.error}</div>`;
+          }
+        } catch (err) {
+          failed++;
+          log.innerHTML += `<div class="err">[${i + 1}/${parsedRows.length}] Network error (${phone})</div>`;
+        }
+
+        progressBar.style.width = Math.round(((i + 1) / parsedRows.length) * 100) + '%';
+        log.scrollTop = log.scrollHeight;
+
+        // 300ms pause between messages to stay safely within rate limits
+        await new Promise(r => setTimeout(r, 300));
+      }
+
+      log.innerHTML += `<div><b>Done! Sent: ${sent}, Failed: ${failed}</b></div>`;
+      btnSend.disabled = false;
+      btnStop.classList.add('hidden');
+    };
+  </script>
+</body>
+</html>
